@@ -1,0 +1,98 @@
+# filename: app.py
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+import pandas as pd
+import joblib
+import numpy as np
+import os
+
+# --- Load Model ---
+model = joblib.load("models/isolation_forest_with_consistency.pkl")
+scaler = joblib.load("models/feature_scaler.pkl") if os.path.exists("models/feature_scaler.pkl") else None
+
+# --- FastAPI App ---
+app = FastAPI(title="Ghost Session Detector API")
+
+# --- Define Input Schema ---
+class SessionInput(BaseModel):
+    user_id: str
+    device_os: str
+    login_hour: float
+    typing_speed_cpm: float
+    nav_path: str
+    nav_path_depth: float
+    ip_country: str
+    session_duration_sec: float
+    mouse_movement_rate: float
+    device_id: str
+    ip_consistency_score: float
+    login_day_of_week: str
+    geo_distance_from_usual: float
+    browser_language: str
+    failed_login_attempts_last_24h: int
+    is_vpn_detected: int
+    recent_device_change: int
+
+class SessionBatchInput(BaseModel):
+    sessions: List[SessionInput]
+
+# --- Risk Mapping ---
+def score_to_risk(score):
+    if score <= -0.23:
+        return 'High'
+    elif score <= -0.05:
+        return 'Medium'
+    elif score <= 0.005:
+        return 'Low'
+    else:
+        return 'None'
+
+# --- Prediction Endpoint ---
+@app.post("/predict")
+def predict(session_batch: SessionBatchInput):
+    try:
+        # Convert to DataFrame
+        df = pd.DataFrame([s.dict() for s in session_batch.sessions])
+
+        # One-hot encode categorical features (align with training)
+        categorical_cols = ['device_os', 'nav_path', 'ip_country', 'browser_language', 'login_day_of_week', 'device_id']
+        df = pd.get_dummies(df, columns=categorical_cols)
+
+        # Ensure all expected columns exist (fill missing with 0)
+        expected_columns = joblib.load("models/feature_columns.pkl")
+        for col in expected_columns:
+            if col not in df.columns:
+                df[col] = 0
+        df = df[expected_columns]  # reorder to match training
+
+        # Optionally scale
+        if scaler:
+            df[df.columns] = scaler.transform(df[df.columns])
+
+        # Predict
+        scores = model.decision_function(df)
+        risks = [score_to_risk(s) for s in scores]
+        predicted_labels = [-1 if r == 'High' else 1 for r in risks]
+
+        # Return response
+        return {
+            "results": [
+                {
+                    "score": float(s),
+                    "risk_level": r,
+                    "predicted_label": int(l)
+                }
+                for s, r, l in zip(scores, risks, predicted_labels)
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Main ---
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
