@@ -36,13 +36,13 @@ def main():
     df = pd.read_csv("Data/ghostpattern_sessions.csv")
     print("Raw data loaded.")
 
-    categorical_cols = ['device_os', 'nav_path', 'ip_country', 'browser_language', 'login_day_of_week', 'device_id']
-    numerical_cols = [
-        'login_hour', 'typing_speed_cpm', 'nav_path_depth',
-        'session_duration_sec', 'mouse_movement_rate',
-        'ip_consistency_score', 'geo_distance_from_usual',
-        'failed_login_attempts_last_24h'
-    ]
+    # Define columns
+    categorical_cols = ['device_os', 'nav_path', 'ip_country', 'browser_language',
+                        'login_day_of_week', 'device_id']
+    numerical_cols = ['login_hour', 'typing_speed_cpm', 'nav_path_depth',
+                      'session_duration_sec', 'mouse_movement_rate',
+                      'ip_consistency_score', 'geo_distance_from_usual',
+                      'failed_login_attempts_last_24h']
     binary_cols = ['is_vpn_detected', 'recent_device_change']
 
     # One-hot encode categoricals
@@ -52,31 +52,34 @@ def main():
     scaler = StandardScaler()
     df[numerical_cols + binary_cols] = scaler.fit_transform(df[numerical_cols + binary_cols])
 
-    # Define feature columns for similarity + z-score
-    feature_cols = numerical_cols + binary_cols + [col for col in df.columns if any(c in col for c in categorical_cols)]
+    # Define feature columns
+    ohe_cols = [col for col in df.columns if any(cat in col for cat in categorical_cols)]
+    feature_cols = numerical_cols + binary_cols + ohe_cols
 
-    # Add user_similarity_score
+    # Add behavioral features
+    print("Computing user similarity...")
     df['user_similarity_score'] = compute_user_similarity(df, feature_cols)
     df['user_similarity_score'] = df['user_similarity_score'].fillna(df['user_similarity_score'].mean())
 
-    # Add user_deviation_score
+    print("Computing user deviation score...")
     df['user_deviation_score'] = compute_user_zscore_deviation(df, numerical_cols + binary_cols)
 
-    # Final feature set
+    # Final dataset
     X = df[feature_cols + ['user_similarity_score', 'user_deviation_score']]
     y = df['label'] if 'label' in df.columns else None
 
     # Train model
+    print("Training Isolation Forest...")
     model = IsolationForest(n_estimators=100, contamination='auto', random_state=42)
     model.fit(X)
-    print("Model trained.")
 
     # Predict
     scores = model.decision_function(X)
+
     def score_to_risk(score):
-        if score <= -0.23:
+        if score <= -0.03:
             return 'High'
-        elif score <= -0.05:
+        elif score <= -0.005:
             return 'Medium'
         elif score <= 0.005:
             return 'Low'
@@ -93,18 +96,20 @@ def main():
         'predicted_label': predicted_labels,
         'label': y if y is not None else predicted_labels
     })
+    print(plot_df['risk_level'].value_counts())
+
 
     if y is not None:
         print("\nClassification Report:")
-        print(classification_report(y, predicted_labels))
+        print(classification_report(y, predicted_labels, zero_division=0))
         print("Confusion Matrix:")
         print(confusion_matrix(y, predicted_labels))
 
         false_positives = plot_df[(predicted_labels == -1) & (y == 1)]
-        print("\nFalse Positives:")
+        print(f"\nFalse Positives ({len(false_positives)}):")
         print(false_positives)
 
-    print(f"Anomaly detection completed. Detected {sum(predicted_labels == -1)} anomalies out of {len(X)} sessions.")
+    print(f"\nAnomaly detection complete. Detected {sum(predicted_labels == -1)} anomalies out of {len(X)} sessions.")
 
     # Plot
     plt.figure(figsize=(10, 6))
@@ -120,10 +125,11 @@ def main():
     # Save model
     os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/isolation_forest_behavioral.pkl")
-    print("Model saved.")
+    print("Model saved to models/isolation_forest_behavioral.pkl")
 
 if __name__ == "__main__":
     main()
+
 
 
 

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ghost Session Detector</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        input, select {
+            width: 250px;
+            margin-bottom: 10px;
+            padding: 5px;
+        }
+
+        button {
+            padding: 8px 16px;
+            margin-top: 10px;
+        }
+
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>Ghost Session Detector</h1>
+
+    <form id="sessionForm">
+        <label>User ID:</label><br>
+        <input type="text" name="user_id"><br>
+
+        <label>Device OS:</label><br>
+        <input type="text" name="device_os"><br>
+
+        <label>Login Hour (e.g. 14.0):</label><br>
+        <input type="number" step="0.01" name="login_hour"><br>
+
+        <label>Typing Speed CPM:</label><br>
+        <input type="number" step="0.01" name="typing_speed_cpm"><br>
+
+        <label>Nav Path:</label><br>
+        <input type="text" name="nav_path"><br>
+
+        <label>Nav Path Depth:</label><br>
+        <input type="number" step="0.01" name="nav_path_depth"><br>
+
+        <label>IP Country:</label><br>
+        <input type="text" name="ip_country"><br>
+
+        <label>Session Duration (sec):</label><br>
+        <input type="number" step="0.01" name="session_duration_sec"><br>
+
+        <label>Mouse Movement Rate:</label><br>
+        <input type="number" step="0.01" name="mouse_movement_rate"><br>
+
+        <label>Device ID:</label><br>
+        <input type="text" name="device_id"><br>
+
+        <label>IP Consistency Score:</label><br>
+        <input type="number" step="0.01" name="ip_consistency_score"><br>
+
+        <label>Login Day of Week:</label><br>
+        <input type="text" name="login_day_of_week"><br>
+
+        <label>Geo Distance from Usual:</label><br>
+        <input type="number" step="0.01" name="geo_distance_from_usual"><br>
+
+        <label>Browser Language:</label><br>
+        <input type="text" name="browser_language"><br>
+
+        <label>Failed Login Attempts (Last 24h):</label><br>
+        <input type="number" name="failed_login_attempts_last_24h"><br>
+
+        <label>Is VPN Detected? (0 or 1):</label><br>
+        <input type="number" name="is_vpn_detected"><br>
+
+        <label>Recent Device Change? (0 or 1):</label><br>
+        <input type="number" name="recent_device_change"><br>
+
+        <button type="submit">Predict Risk</button>
+    </form>
+
+    <div id="result"></div>
+
+    <script>
+        const form = document.getElementById("sessionForm");
+        const resultDiv = document.getElementById("result");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(form);
+            const session = {};
+            formData.forEach((value, key) => {
+                if (!isNaN(value) && value.trim() !== "") {
+                    session[key] = Number(value);
+                } else {
+                    session[key] = value;
+                }
+            });
+
+            const payload = {
+                sessions: [session]
+            };
+
+            try {
+                const response = await fetch("http://localhost:8000/predict", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error("Prediction failed");
+
+                const data = await response.json();
+                const res = data.results[0];
+                resultDiv.innerHTML = `
+                    <strong>Score:</strong> ${res.score.toFixed(4)}<br>
+                    <strong>Risk Level:</strong> ${res.risk_level}<br>
+                    <strong>Predicted Label:</strong> ${res.predicted_label}
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+            }
+        });
+    </script>
+</body>
+</html>
