@@ -68,27 +68,32 @@ def predict(session_batch: SessionBatchInput):
         # Convert to DataFrame
         df = pd.DataFrame([s.dict() for s in session_batch.sessions])
 
+        print("Received batch of size:", list(df.columns))
+        print("Expected columns:", expected_columns)
+
         # --- Frequency Encoding ---
         for col in frequency_encodings:
             freq_map = frequency_encodings[col]
             df[f"{col}_encoded"] = df[col].map(freq_map).fillna(0.0)
-        df.drop(columns=frequency_encodings.keys(), inplace=True)
-
-        # --- Scaling ---
-        if scaler:
-            scaled_cols = [col for col in df.columns if col not in ['user_id']]
-            df[scaled_cols] = scaler.transform(df[scaled_cols])
+        df.drop(columns=list(frequency_encodings.keys()), inplace=True)
 
         # --- Add placeholder behavioral features ---
-        if 'user_similarity_score' not in df.columns:
-            df['user_similarity_score'] = 0.5
-        if 'user_deviation_score' not in df.columns:
-            df['user_deviation_score'] = 0.5
+        df['user_similarity_score'] = 0.5
+        df['user_deviation_score'] = 0.5
+
+        # --- Scale only numeric and binary features ---
+        numeric_and_binary = [
+            'login_hour', 'typing_speed_cpm', 'nav_path_depth', 'session_duration_sec',
+            'mouse_movement_rate', 'ip_consistency_score', 'geo_distance_from_usual',
+            'failed_login_attempts_last_24h', 'is_vpn_detected', 'recent_device_change'
+        ]
+        df[numeric_and_binary] = scaler.transform(df[numeric_and_binary])
 
         # --- Ensure all expected columns exist ---
         for col in expected_columns:
             if col not in df.columns:
                 df[col] = 0.0
+
         df = df[expected_columns]  # reorder
 
         # --- Predict ---
@@ -96,16 +101,16 @@ def predict(session_batch: SessionBatchInput):
         risks = [score_to_risk(s) for s in scores]
         predicted_labels = [-1 if r == "High" else 1 for r in risks]
 
-        return {
-            "results": [
-                {
-                    "score": float(s),
-                    "risk_level": r,
-                    "predicted_label": int(l)
-                }
-                for s, r, l in zip(scores, risks, predicted_labels)
-            ]
-        }
+        results = []
+        for i, row in df.iterrows():
+            results.append({
+                "user_id": session_batch.sessions[i].user_id,
+                "score": float(scores[i]),
+                "risk_level": risks[i],
+                "predicted_label": int(predicted_labels[i])
+            })
+
+        return {"results": results}
 
     except Exception as e:
         print("Error during prediction:", str(e))
@@ -114,5 +119,3 @@ def predict(session_batch: SessionBatchInput):
 # --- Run ---
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
-
-

@@ -1,139 +1,121 @@
+# filename: app.py
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics import classification_report, confusion_matrix
 import joblib
-import matplotlib.pyplot as plt
-import seaborn as sns
 import os
 
-def compute_user_similarity(df, feature_cols):
-    similarity_scores = []
-    for idx, row in df.iterrows():
-        user_id = row['user_id']
-        user_df = df[df['user_id'] == user_id].drop(index=idx)
-        if len(user_df) < 3:
-            similarity_scores.append(np.nan)
-            continue
-        avg_vector = user_df[feature_cols].mean().values.reshape(1, -1)
-        current_vector = row[feature_cols].values.reshape(1, -1)
-        score = cosine_similarity(current_vector, avg_vector)[0][0]
-        similarity_scores.append(score)
-    return similarity_scores
+# --- FastAPI Setup ---
+app = FastAPI(title="Ghost Session Detector API")
 
-def compute_user_zscore_deviation(df, numeric_cols):
-    z_df = df.copy()
-    for col in numeric_cols:
-        z_df[f'{col}_z'] = z_df.groupby('user_id')[col].transform(
-            lambda x: (x - x.mean()) / (x.std() + 1e-5)
-        )
-    z_df['user_deviation_score'] = z_df[[f"{c}_z" for c in numeric_cols]].abs().mean(axis=1)
-    return z_df['user_deviation_score']
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Replace with specific URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def main():
-    df = pd.read_csv("Data/ghostpattern_sessions.csv")
-    print("Raw data loaded.")
+# --- Load Artifacts ---
+model = joblib.load("models/isolation_forest_behavioral.pkl")
+scaler = joblib.load("models/feature_scaler.pkl")
+expected_columns = joblib.load("models/feature_columns.pkl")
+frequency_encodings = joblib.load("models/frequency_encodings.pkl")
 
-    # === Define columns ===
-    categorical_cols = ['device_os', 'nav_path', 'ip_country', 'browser_language',
-                        'login_day_of_week', 'device_id']
-    numerical_cols = ['login_hour', 'typing_speed_cpm', 'nav_path_depth',
-                      'session_duration_sec', 'mouse_movement_rate',
-                      'ip_consistency_score', 'geo_distance_from_usual',
-                      'failed_login_attempts_last_24h']
-    binary_cols = ['is_vpn_detected', 'recent_device_change']
+# --- Input Schema ---
+class SessionInput(BaseModel):
+    user_id: str
+    device_os: str
+    login_hour: float
+    typing_speed_cpm: float
+    nav_path: str
+    nav_path_depth: float
+    ip_country: str
+    session_duration_sec: float
+    mouse_movement_rate: float
+    device_id: str
+    ip_consistency_score: float
+    login_day_of_week: str
+    geo_distance_from_usual: float
+    browser_language: str
+    failed_login_attempts_last_24h: int
+    is_vpn_detected: int
+    recent_device_change: int
 
-    # === Frequency encode categoricals ===
-    print("Encoding categorical features with frequency encoding...")
-    frequency_maps = {}
-    for col in categorical_cols:
-        freq_map = df[col].value_counts(normalize=True).to_dict()
-        df[f"{col}_encoded"] = df[col].map(freq_map).fillna(0.0)
-        frequency_maps[col] = freq_map
-    joblib.dump(frequency_maps, "models/frequency_encodings.pkl")
+class SessionBatchInput(BaseModel):
+    sessions: List[SessionInput]
 
-    # === Drop original categorical columns ===
-    df.drop(columns=categorical_cols, inplace=True)
+# --- Risk Mapping ---
+def score_to_risk(score):
+    if score <= -0.03:
+        return "High"
+    elif score <= -0.005:
+        return "Medium"
+    elif score <= 0.005:
+        return "Low"
+    else:
+        return "None"
 
-    # === Scale numerical + binary ===
-    scaler = StandardScaler()
-    df[numerical_cols + binary_cols] = scaler.fit_transform(df[numerical_cols + binary_cols])
-    joblib.dump(scaler, "models/feature_scaler.pkl")
+# --- Prediction Endpoint ---
+@app.post("/predict")
+def predict(session_batch: SessionBatchInput):
+    try:
+        # Convert to DataFrame
+        df = pd.DataFrame([s.dict() for s in session_batch.sessions])
 
-    # === Final feature columns ===
-    encoded_cols = [f"{col}_encoded" for col in categorical_cols]
-    base_features = numerical_cols + binary_cols + encoded_cols
+        print("Received batch of size:", list(df.columns))
+        print("Expected columns:", expected_columns)
 
-    # === Add behavioral features ===
-    print("Computing behavioral features...")
-    df['user_similarity_score'] = compute_user_similarity(df, base_features)
-    df['user_similarity_score'] = df['user_similarity_score'].fillna(df['user_similarity_score'].mean())
-    df['user_deviation_score'] = compute_user_zscore_deviation(df, numerical_cols + binary_cols)
+        # --- Frequency Encoding ---
+        for col in frequency_encodings:
+            freq_map = frequency_encodings[col]
+            df[f"{col}_encoded"] = df[col].map(freq_map).fillna(0.0)
+        df.drop(columns=list(frequency_encodings.keys()), inplace=True)
 
-    # === Define full feature set ===
-    feature_cols = base_features + ['user_similarity_score', 'user_deviation_score']
-    X = df[feature_cols]
-    y = df['label'] if 'label' in df.columns else None
+        # --- Add placeholder behavioral features ---
+        df['user_similarity_score'] = 0.5
+        df['user_deviation_score'] = 0.5
 
-    # === Save expected column names ===
-    joblib.dump(feature_cols, "models/feature_columns.pkl")
+        # --- Scale only numeric and binary features ---
+        numeric_and_binary = [
+            'login_hour', 'typing_speed_cpm', 'nav_path_depth', 'session_duration_sec',
+            'mouse_movement_rate', 'ip_consistency_score', 'geo_distance_from_usual',
+            'failed_login_attempts_last_24h', 'is_vpn_detected', 'recent_device_change'
+        ]
+        df[numeric_and_binary] = scaler.transform(df[numeric_and_binary])
 
-    # === Train model ===
-    print("Training Isolation Forest...")
-    model = IsolationForest(n_estimators=100, contamination='auto', random_state=42)
-    model.fit(X)
-    joblib.dump(model, "models/isolation_forest_behavioral.pkl")
-    print("Model saved to models/isolation_forest_behavioral.pkl")
+        # --- Ensure all expected columns exist ---
+        for col in expected_columns:
+            if col not in df.columns:
+                df[col] = 0.0
 
-    # === Evaluate model ===
-    scores = model.decision_function(X)
-    def score_to_risk(score):
-        if score <= -0.03:
-            return 'High'
-        elif score <= -0.005:
-            return 'Medium'
-        elif score <= 0.005:
-            return 'Low'
-        else:
-            return 'None'
+        df = df[expected_columns]  # reorder
 
-    risk_levels = [score_to_risk(s) for s in scores]
-    predicted_labels = np.array([-1 if rl == 'High' else 1 for rl in risk_levels])
+        # --- Predict ---
+        scores = model.decision_function(df)
+        risks = [score_to_risk(s) for s in scores]
+        predicted_labels = [-1 if r == "High" else 1 for r in risks]
 
-    plot_df = pd.DataFrame({
-        'score': scores,
-        'risk_level': risk_levels,
-        'predicted_label': predicted_labels,
-        'label': y if y is not None else predicted_labels
-    })
-    print("\nRisk level distribution:")
-    print(plot_df['risk_level'].value_counts())
+        results = []
+        for i, row in df.iterrows():
+            results.append({
+                "user_id": session_batch.sessions[i].user_id,
+                "score": float(scores[i]),
+                "risk_level": risks[i],
+                "predicted_label": int(predicted_labels[i])
+            })
 
-    if y is not None:
-        print("\nClassification Report:")
-        print(classification_report(y, predicted_labels, zero_division=0))
-        print("Confusion Matrix:")
-        print(confusion_matrix(y, predicted_labels))
+        return {"results": results}
 
-    # Plot score distribution
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=plot_df, x='score', hue='label', kde=True, bins=30, palette='coolwarm', multiple='stack')
-    plt.title("Anomaly Score Distribution by Label")
-    plt.xlabel("Score (Higher = More Normal)")
-    plt.ylabel("Count")
-    plt.grid(True)
-    os.makedirs("plots", exist_ok=True)
-    plt.savefig("plots/anomaly_score_plot.png")
-    plt.show()
+    except Exception as e:
+        print("Error during prediction:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
-    print(f"\nAnomaly detection complete. Detected {sum(predicted_labels == -1)} anomalies out of {len(X)} sessions.")
-
+# --- Run ---
 if __name__ == "__main__":
-    main()
-
-
-
-
-
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
