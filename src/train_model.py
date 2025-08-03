@@ -36,7 +36,7 @@ def main():
     df = pd.read_csv("Data/ghostpattern_sessions.csv")
     print("Raw data loaded.")
 
-    # Define columns
+    # === Define columns ===
     categorical_cols = ['device_os', 'nav_path', 'ip_country', 'browser_language',
                         'login_day_of_week', 'device_id']
     numerical_cols = ['login_hour', 'typing_speed_cpm', 'nav_path_depth',
@@ -45,37 +45,50 @@ def main():
                       'failed_login_attempts_last_24h']
     binary_cols = ['is_vpn_detected', 'recent_device_change']
 
-    # One-hot encode categoricals
-    df = pd.get_dummies(df, columns=categorical_cols)
+    # === Frequency encode categoricals ===
+    print("Encoding categorical features with frequency encoding...")
+    frequency_maps = {}
+    for col in categorical_cols:
+        freq_map = df[col].value_counts(normalize=True).to_dict()
+        df[f"{col}_encoded"] = df[col].map(freq_map).fillna(0.0)
+        frequency_maps[col] = freq_map
+    joblib.dump(frequency_maps, "models/frequency_encodings.pkl")
 
-    # Scale numeric + binary
+    # === Drop original categorical columns ===
+    df.drop(columns=categorical_cols, inplace=True)
+
+    # === Scale numerical + binary ===
     scaler = StandardScaler()
     df[numerical_cols + binary_cols] = scaler.fit_transform(df[numerical_cols + binary_cols])
+    joblib.dump(scaler, "models/feature_scaler.pkl")
 
-    # Define feature columns
-    ohe_cols = [col for col in df.columns if any(cat in col for cat in categorical_cols)]
-    feature_cols = numerical_cols + binary_cols + ohe_cols
+    # === Final feature columns ===
+    encoded_cols = [f"{col}_encoded" for col in categorical_cols]
+    base_features = numerical_cols + binary_cols + encoded_cols
 
-    # Add behavioral features
-    print("Computing user similarity...")
-    df['user_similarity_score'] = compute_user_similarity(df, feature_cols)
+    # === Add behavioral features ===
+    print("Computing behavioral features...")
+    df['user_similarity_score'] = compute_user_similarity(df, base_features)
     df['user_similarity_score'] = df['user_similarity_score'].fillna(df['user_similarity_score'].mean())
-
-    print("Computing user deviation score...")
     df['user_deviation_score'] = compute_user_zscore_deviation(df, numerical_cols + binary_cols)
 
-    # Final dataset
-    X = df[feature_cols + ['user_similarity_score', 'user_deviation_score']]
+    # === Define full feature set ===
+    feature_cols = base_features + ['user_similarity_score', 'user_deviation_score']
+    X = df[feature_cols]
     y = df['label'] if 'label' in df.columns else None
 
-    # Train model
+    # === Save expected column names ===
+    joblib.dump(feature_cols, "models/feature_columns.pkl")
+
+    # === Train model ===
     print("Training Isolation Forest...")
     model = IsolationForest(n_estimators=100, contamination='auto', random_state=42)
     model.fit(X)
+    joblib.dump(model, "models/isolation_forest_behavioral.pkl")
+    print("Model saved to models/isolation_forest_behavioral.pkl")
 
-    # Predict
+    # === Evaluate model ===
     scores = model.decision_function(X)
-
     def score_to_risk(score):
         if score <= -0.03:
             return 'High'
@@ -89,15 +102,14 @@ def main():
     risk_levels = [score_to_risk(s) for s in scores]
     predicted_labels = np.array([-1 if rl == 'High' else 1 for rl in risk_levels])
 
-    # Result summary
     plot_df = pd.DataFrame({
         'score': scores,
         'risk_level': risk_levels,
         'predicted_label': predicted_labels,
         'label': y if y is not None else predicted_labels
     })
+    print("\nRisk level distribution:")
     print(plot_df['risk_level'].value_counts())
-
 
     if y is not None:
         print("\nClassification Report:")
@@ -105,13 +117,7 @@ def main():
         print("Confusion Matrix:")
         print(confusion_matrix(y, predicted_labels))
 
-        false_positives = plot_df[(predicted_labels == -1) & (y == 1)]
-        print(f"\nFalse Positives ({len(false_positives)}):")
-        print(false_positives)
-
-    print(f"\nAnomaly detection complete. Detected {sum(predicted_labels == -1)} anomalies out of {len(X)} sessions.")
-
-    # Plot
+    # Plot score distribution
     plt.figure(figsize=(10, 6))
     sns.histplot(data=plot_df, x='score', hue='label', kde=True, bins=30, palette='coolwarm', multiple='stack')
     plt.title("Anomaly Score Distribution by Label")
@@ -122,19 +128,11 @@ def main():
     plt.savefig("plots/anomaly_score_plot.png")
     plt.show()
 
-    # Save scaler
-    joblib.dump(scaler, "models/feature_scaler.pkl")
-
-    # Save feature columns
-    joblib.dump(feature_cols + ['user_similarity_score', 'user_deviation_score'], "models/feature_columns.pkl")
-
-    # Save model
-    os.makedirs("models", exist_ok=True)
-    joblib.dump(model, "models/isolation_forest_behavioral.pkl")
-    print("Model saved to models/isolation_forest_behavioral.pkl")
+    print(f"\nAnomaly detection complete. Detected {sum(predicted_labels == -1)} anomalies out of {len(X)} sessions.")
 
 if __name__ == "__main__":
     main()
+
 
 
 
