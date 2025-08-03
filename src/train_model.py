@@ -122,6 +122,12 @@ def main():
     plt.savefig("plots/anomaly_score_plot.png")
     plt.show()
 
+    # Save scaler
+    joblib.dump(scaler, "models/feature_scaler.pkl")
+
+    # Save feature columns
+    joblib.dump(feature_cols + ['user_similarity_score', 'user_deviation_score'], "models/feature_columns.pkl")
+
     # Save model
     os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/isolation_forest_behavioral.pkl")
