@@ -1,5 +1,3 @@
-# filename: app.py
-
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,30 +31,25 @@ class SessionInput(BaseModel):
     device_os: str
     login_hour: float
     typing_speed_cpm: float
-    nav_path: str
-    nav_path_depth: float
     ip_country: str
     session_duration_sec: float
     mouse_movement_rate: float
     device_id: str
     ip_consistency_score: float
-    login_day_of_week: str
+    login_day_of_week: int  # Now expects an integer
     geo_distance_from_usual: float
-    browser_language: str
     failed_login_attempts_last_24h: int
-    is_vpn_detected: int
-    recent_device_change: int
 
 class SessionBatchInput(BaseModel):
     sessions: List[SessionInput]
 
 # --- Risk Mapping ---
 def score_to_risk(score):
-    if score <= -0.03:
+    if score <= -0.05:
         return "High"
-    elif score <= -0.005:
+    elif score <= -0.01:
         return "Medium"
-    elif score <= 0.005:
+    elif score <= 0.01:
         return "Low"
     else:
         return "None"
@@ -67,27 +60,24 @@ def predict(session_batch: SessionBatchInput):
     try:
         # Convert to DataFrame
         df = pd.DataFrame([s.dict() for s in session_batch.sessions])
-
-        print("Received batch of size:", list(df.columns))
-        print("Expected columns:", expected_columns)
-
+        
         # --- Frequency Encoding ---
         for col in frequency_encodings:
             freq_map = frequency_encodings[col]
             df[f"{col}_encoded"] = df[col].map(freq_map).fillna(0.0)
         df.drop(columns=list(frequency_encodings.keys()), inplace=True)
-
+        
         # --- Add placeholder behavioral features ---
-        df['user_similarity_score'] = 0.5
-        df['user_deviation_score'] = 0.5
-
-        # --- Scale only numeric and binary features ---
-        numeric_and_binary = [
-            'login_hour', 'typing_speed_cpm', 'nav_path_depth', 'session_duration_sec',
+        if 'user_similarity_score' in expected_columns:
+            df['user_similarity_score'] = 0.5
+        
+        # --- Scale only numeric features ---
+        numeric_cols_to_scale = [
+            'login_hour', 'typing_speed_cpm', 'session_duration_sec',
             'mouse_movement_rate', 'ip_consistency_score', 'geo_distance_from_usual',
-            'failed_login_attempts_last_24h', 'is_vpn_detected', 'recent_device_change'
+            'failed_login_attempts_last_24h'
         ]
-        df[numeric_and_binary] = scaler.transform(df[numeric_and_binary])
+        df[numeric_cols_to_scale] = scaler.transform(df[numeric_cols_to_scale])
 
         # --- Ensure all expected columns exist ---
         for col in expected_columns:

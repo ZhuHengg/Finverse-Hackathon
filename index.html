@@ -1,56 +1,141 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Ghost Detection Input</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Session Predictor</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 800px; margin-bottom: 20px; }
+        label { display: block; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; box-sizing: border-box; }
+        button { padding: 10px 20px; cursor: pointer; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; white-space: pre-wrap; }
+    </style>
 </head>
 <body>
-  <h2>Ghost Detection Input Form</h2>
-  <form id="predict-form">
-    <label>User ID: <input name="user_id" required></label><br>
-    <label>Device OS: <input name="device_os" value="Windows"></label><br>
-    <label>Login Hour: <input name="login_hour" type="number"></label><br>
-    <label>Typing Speed (CPM): <input name="typing_speed_cpm" type="number"></label><br>
-    <label>Nav Path: <input name="nav_path" value="login>transfer"></label><br>
-    <label>Nav Path Depth: <input name="nav_path_depth" type="number"></label><br>
-    <label>IP Country: <input name="ip_country" value="MY"></label><br>
-    <label>Session Duration (s): <input name="session_duration_sec" type="number"></label><br>
-    <label>Mouse Movement Rate: <input name="mouse_movement_rate" type="number"></label><br>
-    <label>Device ID: <input name="device_id" value="dev001"></label><br>
-    <label>IP Consistency Score: <input name="ip_consistency_score" type="number" step="0.01"></label><br>
-    <label>Login Day of Week: <input name="login_day_of_week" value="Monday"></label><br>
-    <label>Geo Distance from Usual: <input name="geo_distance_from_usual" type="number"></label><br>
-    <label>Browser Language: <input name="browser_language" value="en-US"></label><br>
-    <label>Failed Login Attempts (24h): <input name="failed_login_attempts_last_24h" type="number"></label><br>
-    <label>VPN Detected? <input name="is_vpn_detected" type="number" min="0" max="1"></label><br>
-    <label>Recent Device Change? <input name="recent_device_change" type="number" min="0" max="1"></label><br>
-    <button type="submit">Submit</button>
-  </form>
 
-  <pre id="output"></pre>
+    <h1>Ghost Session Anomaly Detector</h1>
 
-  <script>
-    document.getElementById('predict-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const formData = new FormData(e.target);
-      const data = Object.fromEntries(formData.entries());
+    <form id="predictionForm">
+        <div>
+            <label for="user_id">User ID:</label>
+            <input type="text" id="user_id" name="user_id" required>
+        </div>
+        
+        <div>
+            <label for="device_os">Device OS:</label>
+            <input type="text" id="device_os" name="device_os" required>
+        </div>
+        
+        <div>
+            <label for="login_hour">Login Hour:</label>
+            <input type="number" id="login_hour" name="login_hour" step="0.01" required>
+        </div>
+        
+        <div>
+            <label for="typing_speed_cpm">Typing Speed (CPM):</label>
+            <input type="number" id="typing_speed_cpm" name="typing_speed_cpm" step="0.01" required>
+        </div>
+        
+        <div>
+            <label for="ip_country">IP Country:</label>
+            <input type="text" id="ip_country" name="ip_country" required>
+        </div>
+        
+        <div>
+            <label for="session_duration_sec">Session Duration (sec):</label>
+            <input type="number" id="session_duration_sec" name="session_duration_sec" step="0.01" required>
+        </div>
+        
+        <div>
+            <label for="mouse_movement_rate">Mouse Movement Rate:</label>
+            <input type="number" id="mouse_movement_rate" name="mouse_movement_rate" step="0.01" required>
+        </div>
 
-      for (const key in data) {
-        if (!isNaN(data[key])) data[key] = Number(data[key]);
-      }
+        <div>
+            <label for="device_id">Device ID:</label>
+            <input type="text" id="device_id" name="device_id" required>
+        </div>
+        
+        <div>
+            <label for="ip_consistency_score">IP Consistency Score:</label>
+            <input type="number" id="ip_consistency_score" name="ip_consistency_score" step="0.01" required>
+        </div>
 
-      const payload = {
-        sessions: [data]  // 👈 wrap in "sessions" as required by backend
-      };
+        <div>
+            <label for="login_day_of_week">Login Day of Week:</label>
+            <select id="login_day_of_week" name="login_day_of_week" required>
+                <option value="0">Monday</option>
+                <option value="1">Tuesday</option>
+                <option value="2">Wednesday</option>
+                <option value="3">Thursday</option>
+                <option value="4">Friday</option>
+                <option value="5">Saturday</option>
+                <option value="6">Sunday</option>
+            </select>
+        </div>
+        
+        <div>
+            <label for="geo_distance_from_usual">Geo Distance from Usual:</label>
+            <input type="number" id="geo_distance_from_usual" name="geo_distance_from_usual" step="0.01" required>
+        </div>
+        
+        <div>
+            <label for="failed_login_attempts_last_24h">Failed Login Attempts:</label>
+            <input type="number" id="failed_login_attempts_last_24h" name="failed_login_attempts_last_24h" required>
+        </div>
+        
+        <button type="submit">Get Prediction</button>
+    </form>
 
-      const res = await fetch('http://127.0.0.1:8000/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+    <h2>Prediction Result:</h2>
+    <pre id="result"></pre>
 
-      const result = await res.json();
-      document.getElementById('output').textContent = JSON.stringify(result, null, 2);
-    });
-  </script>
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            const form = event.target;
+            const formData = new FormData(form);
+
+            const sessionData = {
+                user_id: formData.get('user_id'),
+                device_os: formData.get('device_os'),
+                login_hour: parseFloat(formData.get('login_hour')),
+                typing_speed_cpm: parseFloat(formData.get('typing_speed_cpm')),
+                ip_country: formData.get('ip_country'),
+                session_duration_sec: parseFloat(formData.get('session_duration_sec')),
+                mouse_movement_rate: parseFloat(formData.get('mouse_movement_rate')),
+                device_id: formData.get('device_id'),
+                ip_consistency_score: parseFloat(formData.get('ip_consistency_score')),
+                login_day_of_week: parseInt(formData.get('login_day_of_week')),
+                geo_distance_from_usual: parseFloat(formData.get('geo_distance_from_usual')),
+                failed_login_attempts_last_24h: parseInt(formData.get('failed_login_attempts_last_24h'), 10),
+            };
+
+            const payload = {
+                sessions: [sessionData]
+            };
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                const result = await response.json();
+                document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('result').textContent = 'Error: ' + error.message;
+            }
+        });
+    </script>
+
 </body>
 </html>
